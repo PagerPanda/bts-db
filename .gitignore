@@ -1,0 +1,3 @@
+# Local Claude/patch artifacts (never commit)
+_patch_parts/
+*.patch
