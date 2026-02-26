@@ -1,3 +1,25 @@
 # Local Claude/patch artifacts (never commit)
 _patch_parts/
 *.patch
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor / IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Connection / credential files
+*.env
+*.credentials
+
+# MySQL connection configs
+mysql_config.cnf

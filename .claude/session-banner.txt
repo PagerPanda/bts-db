@@ -1,0 +1,14 @@
+=== BTS Session Briefing ===
+
+ACTIVE TICKETS:
+- NBT522: MA State/Status Refactor (tables + stored procs + views)
+- sp_refresh_cts_dpd_company_refs: SQL Server → MySQL org/company refresh
+
+CRITICAL GOTCHAS:
+1. MySQL 8.0 ONLY — never use Oracle syntax
+2. bts_product.REGULATORY_ACTIVTY_FK — typo is real, use as-is
+3. BIOCIDE_IDENTIFICATION_NO contains control chars — use REGEXP_REPLACE('[^0-9]','')
+4. bts_regulatory_activity has NO IS_ACTIVE column
+5. Status join: rs.PK = ra.REGULATORY_ACTIVITY_STATUS_FK (never rs.REGULATORY_ACTIVITY_FK)
+
+BEFORE ANY SQL: Read docs/BTS_Technical_Reference.md
