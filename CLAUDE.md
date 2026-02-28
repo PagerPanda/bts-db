@@ -14,6 +14,8 @@ Read this before ANY SQL or schema work. It is a selective context primer contai
 - Active JIRA ticket designs (NBT522, sp_refresh)
 
 For additional context see companion docs in `/docs`:
+- `BTS_NBT522_Workstream.md` — NBT522 MA state/status refactor design (read for NBT522 work)
+- `BTS_CTS_DPD_Refresh_Workstream.md` — sp_refresh ETL table inventory (read for ETL work)
 - `BTS_Conversation_Extraction_Notes.md` — conversation source inventory
 - `BTS_Knowledge_Base_Ingestion.md` — vector DB integration plan
 - `BTS_Working_Context.md` — environment metadata and role context

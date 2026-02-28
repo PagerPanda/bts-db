@@ -1,84 +1,50 @@
-# BTS NBT522 Workstream
+# NBT522 — MA State/Status Refactor Workstream
 
-> Active design / implementation reference for the BTS Market Authorization state/status refactor.
-> This file is intentionally separate from the core BTS technical reference because parts of this design may be in-flight rather than fully deployed.
-
----
-
-## 1. WORKSTREAM OVERVIEW
-
-### Ticket
-
-- **JIRA / Ticket:** `NBT522`
-- **Theme:** Market Authorization (MA) State / Status separation
-- **Status in prior sessions:** active design / implementation workstream as of Jan 2026
-
-### Previously referenced participants / roles
-
-- **DB implementation:** Ramy
-- **Frontend / Appian developer:** Yawei
-- **Business owner / amendments context:** Shannon's team
-
-### Why this work exists
-
-The legacy `bts_market_authorization.STATUS` field conflates more than one business concept. The workstream direction is to split this into:
-
-- **MA State** — authorized vs not authorized
-- **MA Status** — operational / market status such as marketed, suspended, revoked
+> This document captures **active design / implementation context**, not guaranteed fully deployed production reality. Validate against the latest approved ticket / branch before implementation.
+>
+> Extracted from `BTS_Technical_Reference.md` Section 12 to reduce auto-load token cost.
 
 ---
 
-## 2. BUSINESS DIRECTION
+## Overview
 
-### Target separation
+* **Ticket:** `NBT522`
+* **Theme:** Market Authorization State / Status separation
+* **Status in prior sessions:** active design / implementation workstream
+* **Key participants previously referenced:** DB implementation by you, front-end work by Yawei, business ownership / amendments from Shannon's team
 
-| Concept       | Meaning                                                              | Intended modeling direction |
-| ------------- | -------------------------------------------------------------------- | --------------------------- |
-| **MA State**  | Whether the market authorization is authorized or not authorized     | state-history model         |
-| **MA Status** | Operational condition of the authorization after issuance            | status-history model        |
+## Business direction
 
-### Key business objective
+The legacy `bts_market_authorization.STATUS` field conflates distinct concepts that the refactor aims to separate:
 
-Stop overloading one legacy column with multiple dimensions of meaning, while preserving auditability and date history.
+| Concept       | Meaning                                                   | Intended treatment   |
+| ------------- | --------------------------------------------------------- | -------------------- |
+| **MA State**  | Whether the authorization is authorized vs not authorized | state-history model  |
+| **MA Status** | Operational status such as marketed / suspended / revoked | status-history model |
 
----
+## Proposed state model
 
-## 3. PROPOSED STATE MODEL
-
-### State combinations discussed
-
-| STATE_CODE       | AUTHORIZED_TYPE_CODE | Intended Display       |
+| STATE_CODE       | AUTHORIZED_TYPE_CODE | Intended display       |
 | ---------------- | -------------------- | ---------------------- |
-| `AUTHORIZED`     | `INITIAL`            | AUTHORIZED – INITIAL   |
-| `AUTHORIZED`     | `AMENDMENT`          | AUTHORIZED – AMENDMENT |
+| `AUTHORIZED`     | `INITIAL`            | AUTHORIZED -- INITIAL   |
+| `AUTHORIZED`     | `AMENDMENT`          | AUTHORIZED -- AMENDMENT |
 | `NOT_AUTHORIZED` | `NULL`               | NOT AUTHORIZED         |
 
-### Design intent
+## Key design intent
 
-- Store `STATE_CODE` and `AUTHORIZED_TYPE_CODE` in the same state-history row.
-- Simplify dashboard displays to the higher-level state where appropriate.
-- Preserve amendment / subtype nuance in history and detail views.
+* Store `STATE_CODE` and `AUTHORIZED_TYPE_CODE` together for state history
+* Use simplified state display in dashboards
+* Preserve subtype nuance such as amendment in history / detail contexts
 
----
+## Proposed date categories
 
-## 4. DATE CONCEPTS REQUIRED
+1. Initial market authorization effective date
+2. Amendment effective dates
+3. MA operational status effective dates
 
-The workstream previously identified three distinct date categories that must be modeled clearly:
+## Proposed new history tables
 
-1. **Initial Market Authorization date**
-   - effective date of the first `AUTHORIZED + INITIAL` event
-2. **MA Amendment date**
-   - effective date range of each `AUTHORIZED + AMENDMENT` event
-3. **MA Status date**
-   - effective date range of each operational status event
-
----
-
-## 5. PROPOSED DATABASE OBJECTS
-
-> These were discussed as proposed design objects. Verify against the latest branch / migration script before implementing.
-
-### Proposed table: `bts_ma_state_hist`
+### `bts_ma_state_hist`
 
 ```sql
 CREATE TABLE bts_ma_state_hist (
@@ -98,7 +64,7 @@ CREATE TABLE bts_ma_state_hist (
 );
 ```
 
-### Proposed table: `bts_ma_status_hist`
+### `bts_ma_status_hist`
 
 ```sql
 CREATE TABLE bts_ma_status_hist (
@@ -113,7 +79,7 @@ CREATE TABLE bts_ma_status_hist (
 );
 ```
 
-### Proposed enhancement to header table
+## Proposed header enhancement
 
 ```sql
 ALTER TABLE bts_appian_rt.bts_market_authorization
@@ -121,151 +87,66 @@ ALTER TABLE bts_appian_rt.bts_market_authorization
   ADD COLUMN ORIGINAL_ISSUER     VARCHAR(100) NULL;
 ```
 
----
+## Proposed stored procedures
 
-## 6. PROPOSED STORED PROCEDURES
+### `sp_ma_submit_state(...)`
 
-### Proposed procedure: `sp_ma_submit_state(...)`
+Working intent previously discussed:
 
-Previously discussed working intent:
+1. Resolve / ensure MA row exists
+2. End-date prior open state interval
+3. Insert new state row
+4. Preserve original issue date / issuer for initial authorization
+5. Do not overwrite original issue metadata on amendments
+6. Preserve original issue metadata when later state becomes not authorized
 
-1. Resolve / ensure a `bts_market_authorization` row exists for the BIN
-2. End-date any prior open state interval row
-3. Insert a new state-history row
-4. If state is `AUTHORIZED + INITIAL`, populate `ORIGINAL_ISSUE_DATE` / `ORIGINAL_ISSUER` if not already set
-5. If state is `AUTHORIZED + AMENDMENT`, do not overwrite original issue metadata
-6. If state is `NOT_AUTHORIZED`, preserve original issue metadata
+### `sp_ma_update_status(...)`
 
-### Proposed procedure: `sp_ma_update_status(...)`
+Working intent previously discussed:
 
-Previously discussed working intent:
-
-1. Require an initial authorized state before allowing operational status updates
+1. Require an initial authorized state before status updates
 2. End-date current open status row
-3. Insert new status-history row
-4. Apply cross-effects for revoked / suspension scenarios per ticket rules
+3. Insert new status row
+4. Apply cross-effects for revoked / suspension scenarios as specified in ticket logic
 
-### Cross-effects discussed in prior sessions
+## Proposed views
 
-- **Revoked-like status**
-  - end-date open authorized state
-  - insert `NOT_AUTHORIZED` state
-- **Temporary suspension-like status**
-  - end-date open marketed-like status
-  - end-date open authorized state where required by design rule
-  - insert `NOT_AUTHORIZED` state where ticket logic requires it
-
-> Exact cross-effect rules should be revalidated against the latest approved business logic before coding.
-
----
-
-## 7. PROPOSED VIEWS
-
-| View                         | Intended Purpose                         |
+| View                         | Intended purpose                         |
 | ---------------------------- | ---------------------------------------- |
 | `bts_view_ma_current`        | Current MA state / status rollup per BIN |
-| `bts_view_ma_state_history`  | Ordered MA state-history view            |
-| `bts_view_ma_status_history` | Ordered MA status-history view           |
+| `bts_view_ma_state_history`  | Ordered state-history view               |
+| `bts_view_ma_status_history` | Ordered status-history view              |
 
-### Intended rollup concepts for `bts_view_ma_current`
+## Reference-table strategy
 
-- current state code
-- current status code
-- simplified display code
-- original issue date
+`bts_ref_market_authorization_status` was treated as an existing candidate reference table for MA codes. Prior design direction suggested it may need to support concepts such as:
 
----
+* `CATEGORY`
+* `IS_ACTIVE`
+* `SEQUENCE`
+* `DATE_IS_REQUIRED`
 
-## 8. REFERENCE-TABLE STRATEGY
+Do **not** assume those columns already exist everywhere; verify against the live schema / approved migration script.
 
-### Existing candidate reference table
+## UI / integration direction
 
-- `bts_ref_market_authorization_status`
+Prior design notes indicated:
 
-### Previously discussed direction
+* separate dropdown sourcing for MA state vs MA status
+* simplified dashboard display from current-state/current-status rollup
+* richer history displays from state/status history views
+* amendment subtype emphasized in history/detail rather than high-level dashboard display
 
-This table was treated as the likely reference-table anchor for MA code management, with possible support for fields such as:
+## Access groups previously referenced
 
-- `CATEGORY`
-- `IS_ACTIVE`
-- `SEQUENCE`
-- `DATE_IS_REQUIRED`
+* `TEST_BTS_ADMIN_BUSINESS`
+* `TEST_BTS_ADMIN_IT`
+* `TEST_BTS_REVIEWER`
 
-### Important caution
+## Important caution
 
-Do **not** assume these columns already exist in all environments. Confirm whether this is:
-
-- already deployed reality
-- migration-script work
-- only a design proposal
+Treat all NBT522 DB objects, stored procedure names, reference-table expansions, and UI contract notes as **design / implementation reference** unless verified as deployed in the target environment.
 
 ---
 
-## 9. UI / FRONT-END CONTRACT DIRECTION
-
-> These are design-direction notes, not guaranteed deployed Appian reality.
-
-### Prior direction included
-
-- separate dropdown sourcing for MA **state** vs MA **status**
-- simplified dashboard display driven from a current rollup view
-- richer history pages driven from state-history and status-history views
-- amendment subtype emphasized more in history/details than on dashboards
-
-### Previously referenced example directions
-
-- query reference data filtered by category for dropdowns
-- use current rollup view for dashboard display
-- use dedicated history views for detail/history sections
-
----
-
-## 10. ACCESS GROUPS REFERENCED
-
-The following access groups were previously referenced in the workstream context:
-
-- `TEST_BTS_ADMIN_BUSINESS`
-- `TEST_BTS_ADMIN_IT`
-- `TEST_BTS_REVIEWER`
-
-These should be treated as environment / implementation notes and confirmed in Appian / security configuration.
-
----
-
-## 11. IMPLEMENTATION CAUTIONS
-
-### Treat as active work
-
-This file documents **active workstream context**, not guaranteed final production architecture.
-
-### Verify before implementation
-
-Before coding or migration work, verify:
-
-- latest approved ticket scope
-- actual deployed schema
-- latest migration scripts
-- Appian form / process expectations
-- business rule confirmation for revoke / suspension cross-effects
-
-### Key risk
-
-Future readers may mistake this design for already-landed production truth. Avoid that assumption unless directly verified.
-
----
-
-## 12. SUMMARY
-
-### What this file is
-
-A dedicated workstream note for the BTS MA state/status refactor under `NBT522`.
-
-### What it is not
-
-- not proof of deployment
-- not a final production spec unless independently verified
-- not a substitute for the live schema or migration scripts
-
-### Practical use
-
-Use this file when you need the historical design logic and implementation direction for NBT522 without polluting the core BTS technical reference.
+*Extracted: 2026-02-28 | Source: BTS_Technical_Reference.md Section 12*
