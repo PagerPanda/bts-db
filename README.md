@@ -24,7 +24,12 @@ SQL scripts for backend development on the Biocides Tracking System (BTS).
 
 ## Reference
 
-See `docs/BTS_Technical_Reference.md` for full schema documentation, known gotchas, and active ticket designs.
+See `docs/BTS_Technical_Reference.md` for schema context, known gotchas, and active ticket designs.
+
+Additional companion docs in `/docs`:
+- `BTS_Conversation_Extraction_Notes.md` — ChatGPT conversation source inventory
+- `BTS_Knowledge_Base_Ingestion.md` — vector DB / knowledge base integration plan
+- `BTS_Working_Context.md` — environment metadata, role context, view definer
 
 ## Claude Code
 

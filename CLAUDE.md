@@ -6,12 +6,17 @@ Lead backend developer on the Government of Canada Health Canada BTS (Biocides T
 ## Full Technical Reference
 @docs/BTS_Technical_Reference.md
 
-Read this before ANY SQL or schema work. It contains:
-- All confirmed table schemas and column names
+Read this before ANY SQL or schema work. It is a selective context primer containing:
+- Core schema anchors (key tables, columns, relationships)
 - Known production column name bugs (do not "fix" them)
-- FK dependency maps
+- FK dependency maps for bts_regulatory_activity
+- Common query patterns and status code groups
 - Active JIRA ticket designs (NBT522, sp_refresh)
-- Stored procedure signatures
+
+For additional context see companion docs in `/docs`:
+- `BTS_Conversation_Extraction_Notes.md` — conversation source inventory
+- `BTS_Knowledge_Base_Ingestion.md` — vector DB integration plan
+- `BTS_Working_Context.md` — environment metadata and role context
 
 ---
 
@@ -40,7 +45,7 @@ Read this before ANY SQL or schema work. It contains:
 ## Active JIRA Tickets
 
 ### NBT522 — MA State/Status Refactor (In Progress)
-Full design in `docs/BTS_Technical_Reference.md` Section 9.
+Full design in `docs/BTS_Technical_Reference.md` Section 12.
 - New tables needed: `bts_ma_state_hist`, `bts_ma_status_hist`
 - New columns on `bts_market_authorization`: `ORIGINAL_ISSUE_DATE`, `ORIGINAL_ISSUER`
 - Two stored procs: `sp_ma_submit_state(...)`, `sp_ma_update_status(...)`
@@ -49,7 +54,7 @@ Full design in `docs/BTS_Technical_Reference.md` Section 9.
 
 ### sp_refresh_cts_dpd_company_refs (In Progress)
 SQL Server → MySQL org/company data refresh stored procedure.
-ETL table inventory in Section 10 of reference doc.
+ETL table inventory in Section 13 of reference doc.
 
 ---
 
