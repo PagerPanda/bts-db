@@ -1,42 +1,107 @@
 # BTS Technical Reference
-> Extracted from ChatGPT conversation history | Split from combined BTS/NHPID reference
-> Use this as context primer for any new coding session on the BTS system.
+
+> Context primer for coding, troubleshooting, and system reasoning on the BTS system.
+> Revised from prior extracted notes and corrected against established BTS session context.
+> **Important:** inventories below are **selective, not exhaustive**, unless explicitly stated otherwise.
 
 ---
 
 ## 1. SYSTEM OVERVIEW
 
 ### BTS — Biocides Tracking System
-| Property | Value |
-|---|---|
-| **DB Engine** | MySQL 8.0 |
-| **Schema** | `bts_appian_rt` |
-| **View Definer** | `` `bts_appian_owner_dv`@`%` `` |
-| **Frontend** | Appian (low-code BPM platform) |
-| **Your Role** | Lead backend developer — full owner of schema, views, debug |
-| **Tooling** | MySQL Workbench |
+
+| Property                        | Value                                      |
+| ------------------------------- | ------------------------------------------ |
+| **DB Engine**                   | MySQL 8.x                                  |
+| **Primary Schema**              | `bts_appian_rt`                            |
+| **Frontend / Workflow Layer**   | Appian                                     |
+| **Primary SQL Clients (local)** | MySQL Workbench / equivalent MySQL tooling |
+
+### Scope
+
+BTS is the operational tracking system for biocides dossier, regulatory activity, market authorization, and related business workflow. It is implemented in Appian with MySQL backing tables, views, and stored procedures, and it also interacts with ETL / refresh processes that populate reference and organization-related data.
+
+### Core system model
+
+* `bts_appian_rt` is the primary runtime schema for BTS operational tables, reference tables, ETL support tables, views, and procedures.
+* Appian record types and process models sit above the MySQL schema and drive user workflow, locking, create/update flows, and record-based UI logic.
+* View definitions and stored procedures are key sources of truth for derived logic, ranking, and refresh behaviour.
+* Some BTS areas contain historical naming debt and legacy modelling choices that must be respected as-is in SQL and Appian integration.
 
 ---
 
-## 2. BTS SCHEMA — TABLE INVENTORY
+## 2. AUTHORITATIVE REFERENCES
 
-### Core Tables
+### Primary sources of truth
 
-#### `bts_dossier`
-```
+1. **Live `bts_appian_rt` schema** — source of truth for actual table and column names
+2. **Appian record types / process models** — source of truth for Appian integration behaviour
+3. **View definitions / stored procedures** — source of truth for current derived logic
+4. **Approved ticket / design artifacts** — source of truth for active refactors not yet fully deployed
+
+### Practical rule
+
+When exact behaviour matters:
+
+* verify object definitions directly in MySQL
+* verify Appian expressions / process variables directly in Appian
+* verify active refactor design against the current approved ticket or implementation branch
+
+---
+
+## 3. CORE SCHEMA ANCHORS
+
+The following objects have been repeatedly important in prior BTS work and should be treated as core schema anchors for future SQL / troubleshooting:
+
+| Object                                | Notes                                                                                     |
+| ------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `bts_regulatory_activity`             | Key columns include `RA_TARGET_DATE`, `STATUS_TARGET_DATE`, `CONTROL_NUMBER_ID`, `STATUS` |
+| `bts_dossier`                         | Key identifier column includes `ID`                                                       |
+| `bts_market_authorization`            | Key columns include `BIOCIDE_IDENTIFICATION_NO`, `STATUS`                                 |
+| `bts_product`                         | Key columns include `PRIMARY_BRAND_NAME_EN`, `PRIMARY_BRAND_NAME_FR`                      |
+| `bts_ref_nhpid_reg_activity_type`     | Key reference table for regulatory activity type                                          |
+| `bts_ref_submission_class`            | Key reference table for submission class                                                  |
+| `bts_ref_nhpid_reg_activity_status`   | Key reference table for RA status                                                         |
+| `bts_ref_market_authorization_status` | Key reference table for MA-related status / code work                                     |
+| `bts_dossier_organization`            | Key dossier-organization linkage table                                                    |
+| `bts_ref_org`                         | Key organization reference table                                                          |
+
+### Historical / legacy naming cautions
+
+* `bts_ref_nhpid_reg_activity_status` is a BTS table despite the `nhpid` naming.
+* `bts_product.REGULATORY_ACTIVTY_FK` is intentionally misspelled in the live schema and must be used exactly as named.
+* `bts_market_authorization.STATUS` is a legacy overloaded field and is part of active refactor work under NBT522.
+
+---
+
+## 4. CORE OPERATIONAL TABLES
+
+> Selective operational inventory for orientation. This is not a full BTS data dictionary.
+
+### `bts_dossier`
+
+Top-level dossier container. Much BTS workflow hangs off the dossier.
+
+**Key columns previously referenced**
+
+```sql
 PK, ID, CREATED_ON, CREATED_BY, MODIFIED_ON, MODIFIED_BY
 ```
-- Top-level container. Everything hangs off a dossier.
 
-#### `bts_regulatory_activity` (primary work table)
-```
+### `bts_regulatory_activity`
+
+Primary regulatory-activity work table.
+
+**Key columns previously referenced**
+
+```sql
 PK
 DOSSIER_FK
 CONTROL_NUMBER_ID
-REGULATORY_ACTIVITY_LEAD_CODE        -- e.g. 'BP'
-REGULATORY_ACTIVITY_TYPE_CODE        -- e.g. 'BNMA'
+REGULATORY_ACTIVITY_LEAD_CODE
+REGULATORY_ACTIVITY_TYPE_CODE
 FILING_FIRST_SUBMISSION_IND
-SUBMISSION_CLASS_CODE                -- e.g. 'SRI-NF', 'UFD'
+SUBMISSION_CLASS_CODE
 ASSIGNED_ON
 ASSIGNED_TO
 STATUS
@@ -46,59 +111,234 @@ MODIFIED_BY, MODIFIED_ON
 LOCK_RECORD, LOCK_RECORD_BY
 RA_TARGET_DATE
 STATUS_TARGET_DATE
+REGULATORY_ACTIVITY_STATUS_FK
 ```
-> ⚠️ **No IS_ACTIVE column** — use `COALESCE(STATUS_TARGET_DATE, RA_TARGET_DATE, MODIFIED_ON, CREATED_ON)` for recency ranking.
 
-#### `bts_market_authorization`
-```
+### Important note
+
+There is **no `IS_ACTIVE` column** on `bts_regulatory_activity`. In prior SQL / view logic, recency was often derived using:
+
+* `COALESCE(STATUS_TARGET_DATE, RA_TARGET_DATE, MODIFIED_ON, CREATED_ON)`
+
+This is useful **query logic**, but should not be treated as a universal business invariant without checking the active view / report definition.
+
+### `bts_market_authorization`
+
+Market authorization header-level table.
+
+**Key columns previously referenced**
+
+```sql
 PK
 DOSSIER_FK
-IS_ACTIVE                            -- 1/0
-STATUS                               -- 'APPROV' for approved
-BIOCIDE_IDENTIFICATION_NO            -- VARCHAR, 8-digit zero-padded identifier
+IS_ACTIVE
+STATUS
+BIOCIDE_IDENTIFICATION_NO
 ```
-> ⚠️ **BIOCIDE_IDENTIFICATION_NO data quality issue**: some values contain embedded control characters (CR=`0x0D`, NBSP=`0xA0`). Use `REGEXP_REPLACE(col, '[^0-9]', '')` before any length/pad operations.
 
-#### `bts_product`
-```
+### Important note
+
+`STATUS` is a **legacy overloaded field**. Historically it has been used in ways that blur authorization-state and operational-status meanings. Active refactor work under **NBT522** separates these concepts more explicitly.
+
+### `bts_product`
+
+Product table linked to dossier and, in practice, to regulatory activity.
+
+**Key columns previously referenced**
+
+```sql
 PK
 DOSSIER_FK
 PRIMARY_BRAND_NAME_EN
 PRIMARY_BRAND_NAME_FR
 IS_ACTIVE
-REGULATORY_ACTIVTY_FK                -- ⚠️ TYPO: missing 'I' in ACTIVITY
+REGULATORY_ACTIVTY_FK
 ```
-> ⚠️ **Known typo**: `REGULATORY_ACTIVTY_FK` (not `REGULATORY_ACTIVITY_FK`). This is the actual column name in prod. Don't "fix" it in queries — use it as-is.
 
-#### `bts_ref_nhpid_reg_activity_status` (lookup / reference)
-```
-PK
-CODE                                 -- e.g. 'APPROVED', 'UNDER_CONSIDERATION', 'REJECTED'
-REGULATORY_ACTIVITY_STATUS_EN
-```
-**Correct join:** `bts_ref_nhpid_reg_activity_status rs ON rs.PK = ra.REGULATORY_ACTIVITY_STATUS_FK`
-> ⚠️ **Common mistake**: joining as `rs.REGULATORY_ACTIVITY_FK = ra.PK` — this column does not exist → MySQL Error 1054.
+### Critical schema caution
 
-> **Note:** Despite "nhpid" in the name, `bts_ref_nhpid_reg_activity_status` is a BTS table in `bts_appian_rt`. The name is historical and does not indicate an NHPID dependency.
+The live column name is:
+
+* `REGULATORY_ACTIVTY_FK`
+
+That typo is real and must be used as-is in SQL, views, joins, and Appian-related work.
 
 ---
 
-### Child Tables of `bts_regulatory_activity` (FK children)
-When deleting from `bts_regulatory_activity`, these must be cleared first in any order:
+## 5. KEY REFERENCE TABLES AND COMMON JOIN CAUTIONS
 
-| Table | FK Column | Constraint Name |
-|---|---|---|
-| `bts_audit_regulatory_activity` | `REGULATORY_ACTIVITY_FK` | — |
-| `bts_document_regulatory_activity` | `REGULATORY_ACTIVITY_FK` | `DocumentRegulatoryActivityRegulatoryActivity_FK` |
-| `bts_note_regulatory_activity` | `REGULATORY_ACTIVITY_FK` | `NoteRegulatoryActivityRegulatoryActivity_FK` |
-| `bts_ra_fee` | `REGULATORY_ACTIVITY_FK` | `BTS_RA_FEE_REGULATORY_ACTIVITY_FK` |
-| `bts_ra_status_history` | `REGULATORY_ACTIVITY_FK` | `RAStatusHistoryRegulatoryActivityFK_FK` |
-| `bts_related_transaction` | `REGULATORY_ACTIVITY_FK` | `BTS_RELATED_TRANSACTION_REGULATORY_ACTIVITY_FK_FK` |
-| **`bts_product`** | `REGULATORY_ACTIVTY_FK` | `BTS_PRODUCT_REGULATORY_ACTIVITY_FK` |
+### `bts_ref_nhpid_reg_activity_status`
 
-> The `bts_product` row is the one most people miss — note the typo in the column name.
+Reference table used for RA status classification.
 
-**Query to discover all FK children of any table:**
+**Typical relevant columns**
+
+```sql
+PK
+CODE
+REGULATORY_ACTIVITY_STATUS_EN
+```
+
+### Correct join pattern
+
+```sql
+bts_ref_nhpid_reg_activity_status rs
+  ON rs.PK = ra.REGULATORY_ACTIVITY_STATUS_FK
+```
+
+### Common mistake
+
+Do **not** join on a nonexistent column such as:
+
+```sql
+rs.REGULATORY_ACTIVITY_FK = ra.PK
+```
+
+That leads to MySQL error 1054 for unknown column.
+
+### Related core reference tables
+
+The following are recurring reference tables in BTS work:
+
+* `bts_ref_nhpid_reg_activity_type`
+* `bts_ref_submission_class`
+* `bts_ref_market_authorization_status`
+* `bts_ref_org`
+
+When implementing logic that depends on business semantics, always confirm whether the semantic source is:
+
+* table code values
+* view logic
+* Appian logic
+* ticket-specific mapping rules
+
+---
+
+## 6. KNOWN VIEWS / DERIVED LOGIC SURFACES
+
+> These are key BTS views referenced in prior work. Verify exact existence and definition in the target environment.
+
+| View                                  | Notes                                                                                   |
+| ------------------------------------- | --------------------------------------------------------------------------------------- |
+| `bts_view_dossier`                    | Main dossier rollup joining dossier + product + RA + market + organization-related data |
+| `bts_view_dossier_organization`       | Organization / company information per dossier                                          |
+| `bts_view_dossier_recent_approved_ra` | Most recent approved RA per dossier using ranking logic                                 |
+| `bts_view_dossier_recent_draft_ra`    | Most recent pending / draft-like RA per dossier using ranking logic                     |
+
+### Practical rule
+
+If a query seems to duplicate a BTS view's purpose, inspect the actual view definition before re-implementing the logic ad hoc.
+
+---
+
+## 7. COMMON SQL / VIEW LOGIC PATTERNS
+
+> These are **working patterns used in prior BTS SQL / view logic**, not guaranteed universal business definitions.
+
+### RA status classification patterns
+
+#### Approved / authorized-like
+
+```sql
+rs.CODE IN ('APPROVED','MARKET','MA','AUTHORIZED')
+   OR rs.REGULATORY_ACTIVITY_STATUS_EN IN ('APPROVED','MARKET AUTHORIZED')
+```
+
+#### Pending / draft-like
+
+```sql
+rs.CODE IN ('UNDER_CONSIDERATION','UNDER_RECONSIDERATION','SCREENING','SCRREC','INACTIVE_RECONSIDERATION')
+AND rs.CODE NOT IN ('REJECTED','CANCEL','CANCEL_REVIEW','WITHDRAWN','INACTIVE')
+```
+
+#### Terminal / negative
+
+```sql
+rs.CODE IN ('REJECTED','CANCEL','CANCEL_REVIEW','WITHDRAWN','INACTIVE')
+```
+
+### Most recent RA per dossier — ranking pattern
+
+This ranking style has been used in recent-approved / recent-draft dossier logic and similar ad hoc SQL.
+
+```sql
+WITH ranked AS (
+  SELECT
+      ra.DOSSIER_FK,
+      ra.PK AS RA_PK,
+      p.PRIMARY_BRAND_NAME_EN,
+      p.PRIMARY_BRAND_NAME_FR,
+      ROW_NUMBER() OVER (
+        PARTITION BY ra.DOSSIER_FK
+        ORDER BY COALESCE(
+                 ra.STATUS_TARGET_DATE,
+                 ra.RA_TARGET_DATE,
+                 ra.MODIFIED_ON,
+                 ra.CREATED_ON
+               ) DESC,
+               ra.PK DESC
+      ) AS rn
+  FROM bts_regulatory_activity ra
+  JOIN bts_ref_nhpid_reg_activity_status rs
+    ON rs.PK = ra.REGULATORY_ACTIVITY_STATUS_FK
+  LEFT JOIN bts_product p
+    ON p.DOSSIER_FK = ra.DOSSIER_FK
+   AND p.IS_ACTIVE = 1
+  WHERE rs.CODE IN ('APPROVED','MARKET','MA','AUTHORIZED')
+)
+SELECT DOSSIER_FK, RA_PK, PRIMARY_BRAND_NAME_EN, PRIMARY_BRAND_NAME_FR
+FROM ranked
+WHERE rn = 1;
+```
+
+### Important caution
+
+Treat this as a **ranking pattern**, not a universal legal/business rule. If the output is business-critical, verify against the active view or approved reporting logic.
+
+### FK discovery pattern
+
+Useful for delete planning and schema analysis.
+
+```sql
+SELECT
+    kcu.CONSTRAINT_SCHEMA,
+    kcu.TABLE_NAME,
+    kcu.COLUMN_NAME,
+    kcu.CONSTRAINT_NAME,
+    kcu.REFERENCED_TABLE_NAME,
+    kcu.REFERENCED_COLUMN_NAME
+FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+WHERE kcu.REFERENCED_TABLE_NAME = '<your_table>'
+  AND kcu.REFERENCED_COLUMN_NAME = 'PK'
+ORDER BY CONSTRAINT_SCHEMA, TABLE_NAME;
+```
+
+---
+
+## 8. OBSERVED FK DELETE TOPOLOGY — `bts_regulatory_activity`
+
+> Observed child-table inventory from prior work. Always re-query `INFORMATION_SCHEMA.KEY_COLUMN_USAGE` before assuming the list is complete.
+
+When deleting from `bts_regulatory_activity`, prior work identified the following FK children as needing clearance first:
+
+| Table                              | FK Column                | Constraint Name                                     |
+| ---------------------------------- | ------------------------ | --------------------------------------------------- |
+| `bts_audit_regulatory_activity`    | `REGULATORY_ACTIVITY_FK` | —                                                   |
+| `bts_document_regulatory_activity` | `REGULATORY_ACTIVITY_FK` | `DocumentRegulatoryActivityRegulatoryActivity_FK`   |
+| `bts_note_regulatory_activity`     | `REGULATORY_ACTIVITY_FK` | `NoteRegulatoryActivityRegulatoryActivity_FK`       |
+| `bts_ra_fee`                       | `REGULATORY_ACTIVITY_FK` | `BTS_RA_FEE_REGULATORY_ACTIVITY_FK`                 |
+| `bts_ra_status_history`            | `REGULATORY_ACTIVITY_FK` | `RAStatusHistoryRegulatoryActivityFK_FK`            |
+| `bts_related_transaction`          | `REGULATORY_ACTIVITY_FK` | `BTS_RELATED_TRANSACTION_REGULATORY_ACTIVITY_FK_FK` |
+| `bts_product`                      | `REGULATORY_ACTIVTY_FK`  | `BTS_PRODUCT_REGULATORY_ACTIVITY_FK`                |
+
+### Important caution
+
+The `bts_product` row is easy to miss because of the typo column name:
+
+* `REGULATORY_ACTIVTY_FK`
+
+### Discovery query
+
 ```sql
 SELECT
     kcu.CONSTRAINT_SCHEMA AS child_schema,
@@ -114,59 +354,81 @@ ORDER BY child_schema, child_table;
 
 ---
 
-### Views (confirmed existing)
-| View | Purpose |
-|---|---|
-| `bts_view_dossier` | Main dossier rollup — joins dossier + product + RA + market + org |
-| `bts_view_dossier_organization` | Org/company info per dossier |
-| `bts_view_dossier_recent_approved_ra` | Most recent approved RA per dossier (window fn) |
-| `bts_view_dossier_recent_draft_ra` | Most recent pending/draft RA per dossier |
+## 9. APPIAN INTEGRATION NOTES
 
----
+> These notes reflect prior BTS/Appian implementation work and should be validated against the current Appian object model.
 
-## 3. BTS — APPIAN RECORD TYPES
+### Appian record type mappings previously referenced
 
-Appian record types mapped to BTS tables:
-
-| Appian Record Type | Maps To |
-|---|---|
-| `BTS_Product` | `bts_product` |
-| `BTS_Dossier` | `bts_dossier` |
-| `BTS_Regulatory_Activity` | `bts_regulatory_activity` |
-| `BTS_Product_Container` | `bts_product_container` (multiple) |
-| `BTS_Product_Brand_Name` | `bts_product_brand_name` (multiple) |
-| `BTS_Product_Active_Ingredient` | `bts_product_active_ingredient` (multiple) |
-| `BTS_Product_Use_Setting` | `bts_product_use_setting` (multiple) |
-| `BTS_Product_Use_Purpose` | `bts_product_use_purpose` (multiple) |
-| `BTS_Product_Method_Of_Application` | `bts_product_method_of_application` (multiple) |
-| `BTS_Product_Monograph` | `bts_product_monograph` |
-| `BTS_Product_Detail` | `bts_product_detail` |
-| `BTS_Product_Comparison` | `bts_product_comparison` |
+| Appian Record Type                    | Maps To                               |
+| ------------------------------------- | ------------------------------------- |
+| `BTS_Product`                         | `bts_product`                         |
+| `BTS_Dossier`                        | `bts_dossier`                         |
+| `BTS_Regulatory_Activity`             | `bts_regulatory_activity`             |
+| `BTS_Product_Container`               | `bts_product_container`               |
+| `BTS_Product_Brand_Name`              | `bts_product_brand_name`              |
+| `BTS_Product_Active_Ingredient`       | `bts_product_active_ingredient`       |
+| `BTS_Product_Use_Setting`             | `bts_product_use_setting`             |
+| `BTS_Product_Use_Purpose`             | `bts_product_use_purpose`             |
+| `BTS_Product_Method_Of_Application`   | `bts_product_method_of_application`   |
+| `BTS_Product_Monograph`               | `bts_product_monograph`               |
+| `BTS_Product_Detail`                  | `bts_product_detail`                  |
+| `BTS_Product_Comparison`              | `bts_product_comparison`              |
 | `BTS_Product_Use_Of_Foreign_Decision` | `bts_product_use_of_foreign_decision` |
 
-**Process model context:**
-Process: `BTS Create Or Update Product (2.0)`
-Key node: `Get Product Lock Info`
-Key PV inputs to this node: `BTS_Product` (record), `pk` (Number Integer), `regulatoryActivtyFK` (Number Integer — note typo matches column), `dossierFK`, `status`, `lockRecord`, `lockRecordBy`, etc.
+### Process model context previously referenced
+
+* Process: `BTS Create Or Update Product (2.0)`
+* Key node: `Get Product Lock Info`
+
+### Previously referenced PV inputs to that node
+
+* `BTS_Product`
+* `pk`
+* `regulatoryActivtyFK`
+* `dossierFK`
+* `status`
+* `lockRecord`
+* `lockRecordBy`
+
+### Caution
+
+The Appian side may intentionally mirror backend naming debt, including:
+
+* `regulatoryActivtyFK` typo-like naming aligned to `REGULATORY_ACTIVTY_FK`
 
 ---
 
-## 4. BTS — KNOWN BUGS AND GOTCHAS
+## 10. TROUBLESHOOTING / KNOWN DEFECTS
 
-### Bug 1: BIOCIDE_IDENTIFICATION_NO control characters
-**Symptom:** `LPAD(..., 8, '0')` returns 0 rows changed even though 15 rows matched.
-**Root cause:** Values contain embedded non-digit bytes (CR=`0D`, NBSP=`A0`) — `CHAR_LENGTH` reports 7 but data isn't clean.
-**Fix:**
+### 10.1 BIOCIDE_IDENTIFICATION_NO non-digit contamination
+
+#### Symptom
+
+`LPAD(..., 8, '0')` returns no effective changes even though rows appear to match.
+
+#### Root cause
+
+Some `BIOCIDE_IDENTIFICATION_NO` values contain embedded non-digit bytes such as:
+
+* carriage return (`0D`)
+* non-breaking space (`A0`)
+
+#### Diagnostic pattern
+
 ```sql
--- Diagnosis
 SELECT BIOCIDE_IDENTIFICATION_NO,
        CHAR_LENGTH(BIOCIDE_IDENTIFICATION_NO) AS len,
        HEX(BIOCIDE_IDENTIFICATION_NO) AS raw_hex
 FROM bts_appian_rt.bts_market_authorization
 WHERE STATUS = 'APPROV';
+```
 
--- Cleanup + pad
+#### Cleanup pattern
+
+```sql
 START TRANSACTION;
+
 UPDATE bts_appian_rt.bts_market_authorization
 SET BIOCIDE_IDENTIFICATION_NO =
       LPAD(REGEXP_REPLACE(BIOCIDE_IDENTIFICATION_NO, '[^0-9]', ''), 8, '0')
@@ -174,212 +436,148 @@ WHERE STATUS = 'APPROV'
   AND CHAR_LENGTH(REGEXP_REPLACE(BIOCIDE_IDENTIFICATION_NO, '[^0-9]', '')) = 7
   AND BIOCIDE_IDENTIFICATION_NO <>
       LPAD(REGEXP_REPLACE(BIOCIDE_IDENTIFICATION_NO, '[^0-9]', ''), 8, '0');
+
 SELECT ROW_COUNT() AS rows_changed;
+
 COMMIT;
 ```
 
-### Bug 2: Appian `pv!BTS_Product.pk` null error
-**Error:** `a!queryRecordByIdentifier identifier cannot be null or empty`
-**Process:** BTS Create Or Update Product (2.0) → Get Product Lock Info node
-**Root cause:** On CREATE path, pk doesn't exist yet; expression digs into `pv!BTS_Product` record which has null pk.
-**Fix:**
-1. In node Data Inputs → find the input whose Value contains `a!queryRecordByIdentifier` → change identifier to `pv!pk`
-2. Add node run condition: `not(isnull(pv!pk))` so node skips on create path
+### Practical rule
 
-### Bug 3: Wrong status table join
-**Error:** MySQL 1054 `Unknown column 'rs.REGULATORY_ACTIVITY_FK' in 'on clause'`
-**Fix:** Always join as `bts_ref_nhpid_reg_activity_status rs ON rs.PK = ra.REGULATORY_ACTIVITY_STATUS_FK`
-
-### Bug 4: `bts_product.REGULATORY_ACTIVTY_FK` typo
-The column exists with the typo in production. Use `REGULATORY_ACTIVTY_FK` in all queries (not `REGULATORY_ACTIVITY_FK`).
+When handling BIN values, sanitize to digits before doing length checks, padding, or comparisons.
 
 ---
 
-## 5. BTS — COMMON QUERY PATTERNS
+### 10.2 Appian create-path null identifier bug
 
-### RA Status codes (approved / draft / terminal)
+#### Error
+
+```text
+a!queryRecordByIdentifier identifier cannot be null or empty
+```
+
+#### Context
+
+* Process: `BTS Create Or Update Product (2.0)`
+* Node: `Get Product Lock Info`
+
+#### Root cause
+
+On the create path, `pk` does not yet exist, but the expression attempts to query by identifier using a null value from the record/process state.
+
+#### Working fix pattern
+
+1. In node Data Inputs, find the value containing `a!queryRecordByIdentifier`
+2. Use `pv!pk` as the identifier source rather than digging into an unsaved record
+3. Add a run condition such as:
+
+```text
+not(isnull(pv!pk))
+```
+
+#### Practical rule
+
+Any Appian node that queries a record by identifier must be guarded on create flows where the PK has not yet been persisted.
+
+---
+
+### 10.3 Wrong RA status join
+
+#### Error
+
+MySQL 1054 unknown column in join clause.
+
+#### Cause
+
+Incorrect join logic against `bts_ref_nhpid_reg_activity_status`.
+
+#### Correct pattern
+
 ```sql
--- Approved/authorized
-rs.CODE IN ('APPROVED','MARKET','MA','AUTHORIZED')
-   OR rs.REGULATORY_ACTIVITY_STATUS_EN IN ('APPROVED','MARKET AUTHORIZED')
-
--- Pending/draft (not terminal)
-rs.CODE IN ('UNDER_CONSIDERATION','UNDER_RECONSIDERATION','SCREENING','SCRREC','INACTIVE_RECONSIDERATION')
-AND rs.CODE NOT IN ('REJECTED','CANCEL','CANCEL_REVIEW','WITHDRAWN','INACTIVE')
-
--- Terminal/negative
-rs.CODE IN ('REJECTED','CANCEL','CANCEL_REVIEW','WITHDRAWN','INACTIVE')
-```
-
-### Most recent RA per dossier (window function pattern)
-```sql
-WITH ranked AS (
-  SELECT
-      ra.DOSSIER_FK,
-      ra.PK AS RA_PK,
-      p.PRIMARY_BRAND_NAME_EN,
-      p.PRIMARY_BRAND_NAME_FR,
-      ROW_NUMBER() OVER (
-        PARTITION BY ra.DOSSIER_FK
-        ORDER BY COALESCE(ra.STATUS_TARGET_DATE,
-                          ra.RA_TARGET_DATE,
-                          ra.MODIFIED_ON,
-                          ra.CREATED_ON) DESC, ra.PK DESC
-      ) AS rn
-  FROM bts_regulatory_activity ra
-  JOIN bts_ref_nhpid_reg_activity_status rs ON rs.PK = ra.REGULATORY_ACTIVITY_STATUS_FK
-  LEFT JOIN bts_product p ON p.DOSSIER_FK = ra.DOSSIER_FK AND p.IS_ACTIVE = 1
-  WHERE rs.CODE IN ('APPROVED','MARKET','MA','AUTHORIZED')
-)
-SELECT DOSSIER_FK, RA_PK, PRIMARY_BRAND_NAME_EN, PRIMARY_BRAND_NAME_FR
-FROM ranked WHERE rn = 1;
-```
-
-### Find all FKs referencing any table (cross-schema safe)
-```sql
-SELECT kcu.CONSTRAINT_SCHEMA, kcu.TABLE_NAME, kcu.COLUMN_NAME, kcu.CONSTRAINT_NAME,
-       kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME
-FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
-WHERE kcu.REFERENCED_TABLE_NAME = '<your_table>'
-  AND kcu.REFERENCED_COLUMN_NAME = 'PK'
-ORDER BY CONSTRAINT_SCHEMA, TABLE_NAME;
+bts_ref_nhpid_reg_activity_status rs
+  ON rs.PK = ra.REGULATORY_ACTIVITY_STATUS_FK
 ```
 
 ---
 
-## 6. CONVERSATION INVENTORY (source files)
+### 10.4 Live schema typo on product→RA FK
 
-| # | Date | Title | System | Size |
-|---|---|---|---|---|
-| 19 | 2025-08-08 | Insert unique bioc data | BTS/NHPID | 45K |
-| 21 | 2025-08-22 | Replace view query | BTS | 12K |
-| 22 | 2025-10-02 | Update BIOCIDE_IDENTIFICATION_NO | BTS | 31K |
-| 23 | 2025-10-07 | Write in MySQL | BTS | 1K |
-| 25 | 2025-11-06 | MySQL script for Oracle | BTS | 10K |
-| 26 | 2025-11-07 | Create view script | BTS | 119K |
-| 28 | 2025-11-21 | Debugging Appian error | BTS/Appian | 723K |
-| 29 | 2025-11-21 | Find tables with column | BTS | 48K |
-| 30 | 2025-11-28 | Fix SQL syntax error | BTS | 612K |
-| 32 | 2025-12-03 | Control number ranking rewrite | BTS | 33K |
-| 34 | 2025-12-16 | Create table script | BTS | 1.33M |
+This is not merely a one-off bug; it is a persistent schema truth:
 
-> Conversations #19 and #28 are cross-system — also tracked in the NHPID repo where relevant.
+* `bts_product.REGULATORY_ACTIVTY_FK` is the live column name
+* do not silently "correct" it to `REGULATORY_ACTIVITY_FK` in SQL or Appian logic
 
 ---
 
-## 7. HANDLING `conversations-006.json` (59MB — TOO LARGE TO UPLOAD)
+## 11. INTEGRATION / REFRESH CONTEXT
 
-The 31MB chat limit blocked this file. Options to process it:
+### Broader integration pattern
 
-**Option A — Split it locally (recommended):**
-```python
-import json
+Prior BTS work included CTS/DPD → BTS runtime/reference refresh design and implementation work, including nightly / repeatable refresh concepts into `bts_appian_rt`.
 
-with open('conversations-006.json') as f:
-    data = json.load(f)
+### Key workstream example
 
-mid = len(data) // 2
-with open('conversations-006a.json', 'w') as f:
-    json.dump(data[:mid], f)
-with open('conversations-006b.json', 'w') as f:
-    json.dump(data[mid:], f)
+* `sp_refresh_cts_dpd_company_refs`
 
-print(f"Total: {len(data)} convos → {mid} + {len(data)-mid}")
-```
-Then upload `conversations-006a.json` and `conversations-006b.json` in a new session.
-
-**Option B — Pre-filter to only technical conversations:**
-```python
-import json
-
-KEYWORDS = [
-    'bts_regulatory_activity', 'bts_market_authorization',
-    'BIOCIDE_IDENTIFICATION_NO', 'CONTROL_NUMBER_ID',
-    'bts_appian_rt', 'bts_dossier'
-]
-
-with open('conversations-006.json') as f:
-    data = json.load(f)
-
-def full_text(convo):
-    texts = []
-    for node in convo.get('mapping', {}).values():
-        msg = node.get('message')
-        if not msg: continue
-        parts = msg.get('content', {}).get('parts', []) if isinstance(msg.get('content'), dict) else []
-        texts.extend(p for p in parts if isinstance(p, str))
-    return ' '.join(texts)
-
-hits = [c for c in data if any(k.lower() in full_text(c).lower() for k in KEYWORDS)]
-with open('conversations-006-bts.json', 'w') as f:
-    json.dump(hits, f)
-
-print(f"Filtered: {len(hits)}/{len(data)} conversations")
-```
-Upload the filtered file — it'll be much smaller.
+This workstream is part of the broader BTS system mental model because organization/company reference data and related structures are populated and maintained through ETL / refresh processes, not only by direct user-facing Appian CRUD.
 
 ---
 
-## 8. NEXT STEPS — VECTOR DB INTEGRATION
+## 12. ACTIVE DESIGN / IMPLEMENTATION WORKSTREAM — NBT522
 
-Once Mac mini M4 Pro is set up:
-1. Copy all BTS `.md` files from extraction to Mac mini knowledge base directory
-2. Chunk by conversation section (≈500 token chunks with overlap)
-3. Embed with OpenAI `text-embedding-3-small` or Anthropic embeddings
-4. Store in local vector DB (ChromaDB or pgvector recommended)
-5. Tag each chunk with metadata: `system` = BTS, `date`, `topic`, `keywords_hit`
-6. Process `conversations-006.json` and merge into the same DB
-
----
-
-## 9. BTS — ACTIVE TICKET: NBT522 — MA State/Status Refactor (Jan 2026)
+> This section captures **active design / implementation context**, not guaranteed fully deployed production reality. Validate against the latest approved ticket / branch before implementation.
 
 ### Overview
-**JIRA:** NBT522 — Market Authorization State/Status separation
-**Your role:** DB implementation (Ramy)
-**Frontend developer:** Yawei
-**Business owner/MA amendments:** Shannon's team
-**Status as of Jan 2026:** Active — DB design underway
 
-### Core Business Rule: State vs Status Separation
-The existing `bts_market_authorization.STATUS` column conflates two distinct concepts that must now be separated:
+* **Ticket:** `NBT522`
+* **Theme:** Market Authorization State / Status separation
+* **Status in prior sessions:** active design / implementation workstream
+* **Key participants previously referenced:** DB implementation by you, front-end work by Yawei, business ownership / amendments from Shannon's team
 
-| Concept | Description | New Object |
-|---|---|---|
-| **MA State** | Whether the MA is authorized or not | `bts_ma_state_hist` |
-| **MA Status** | Operational status (marketed, suspended, etc.) | `bts_ma_status_hist` |
+### Business direction
 
-### MA State Values (3 combinations)
-| STATE_CODE | AUTHORIZED_TYPE_CODE | Display |
-|---|---|---|
-| `AUTHORIZED` | `INITIAL` | "AUTHORIZED – INITIAL" |
-| `AUTHORIZED` | `AMENDMENT` | "AUTHORIZED – AMENDMENT" |
-| `NOT_AUTHORIZED` | NULL | "NOT AUTHORIZED" |
+The legacy `bts_market_authorization.STATUS` field conflates distinct concepts that the refactor aims to separate:
 
-> **Design decision:** Store `STATE_CODE` (AUTHORIZED/NOT_AUTHORIZED) + `AUTHORIZED_TYPE_CODE` (INITIAL/AMENDMENT/null) in the same row. Dashboards show simplified `STATE_CODE` only; history pages use `AUTHORIZED_TYPE_CODE` for full display.
+| Concept       | Meaning                                                   | Intended treatment   |
+| ------------- | --------------------------------------------------------- | -------------------- |
+| **MA State**  | Whether the authorization is authorized vs not authorized | state-history model  |
+| **MA Status** | Operational status such as marketed / suspended / revoked | status-history model |
 
-### MA Status Values (reference codes)
-`MARKETED`, `TEMPORARY SUSPENSION`, `TEMPORARY PARTIAL SUSPENSION`, `REVOKED` (and variants)
+### Proposed state model
 
-### Three Date Categories Required
-1. **Initial Market Authorization date** — effective date of first AUTHORIZED-INITIAL event
-2. **MA Amendment date** — effective date of each AUTHORIZED-AMENDMENT event (start + end)
-3. **MA Status date** — effective start/end of each status event
+| STATE_CODE       | AUTHORIZED_TYPE_CODE | Intended display       |
+| ---------------- | -------------------- | ---------------------- |
+| `AUTHORIZED`     | `INITIAL`            | AUTHORIZED – INITIAL   |
+| `AUTHORIZED`     | `AMENDMENT`          | AUTHORIZED – AMENDMENT |
+| `NOT_AUTHORIZED` | `NULL`               | NOT AUTHORIZED         |
 
-### New Tables to Create
+### Key design intent
+
+* Store `STATE_CODE` and `AUTHORIZED_TYPE_CODE` together for state history
+* Use simplified state display in dashboards
+* Preserve subtype nuance such as amendment in history / detail contexts
+
+### Proposed date categories
+
+1. Initial market authorization effective date
+2. Amendment effective dates
+3. MA operational status effective dates
+
+### Proposed new history tables
 
 #### `bts_ma_state_hist`
+
 ```sql
 CREATE TABLE bts_ma_state_hist (
-  ID                    INT AUTO_INCREMENT PRIMARY KEY,
-  MARKET_AUTHORIZATION_FK INT NOT NULL,              -- FK → bts_market_authorization.PK
-  STATE_CODE            VARCHAR(30) NOT NULL,         -- 'AUTHORIZED' / 'NOT_AUTHORIZED'
-  AUTHORIZED_TYPE_CODE  VARCHAR(20) NULL,             -- 'INITIAL' / 'AMENDMENT' / NULL
-  EFFECTIVE_START_DATE  DATE NOT NULL,
-  EFFECTIVE_END_DATE    DATE NULL,
-  ISSUER                VARCHAR(100) NULL,
-  CREATED_BY            VARCHAR(100),
-  CREATED_ON            DATETIME DEFAULT CURRENT_TIMESTAMP,
+  ID                      INT AUTO_INCREMENT PRIMARY KEY,
+  MARKET_AUTHORIZATION_FK INT NOT NULL,
+  STATE_CODE              VARCHAR(30) NOT NULL,
+  AUTHORIZED_TYPE_CODE    VARCHAR(20) NULL,
+  EFFECTIVE_START_DATE    DATE NOT NULL,
+  EFFECTIVE_END_DATE      DATE NULL,
+  ISSUER                  VARCHAR(100) NULL,
+  CREATED_BY              VARCHAR(100),
+  CREATED_ON              DATETIME DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT chk_auth_type CHECK (
     (STATE_CODE = 'AUTHORIZED' AND AUTHORIZED_TYPE_CODE IN ('INITIAL','AMENDMENT'))
     OR (STATE_CODE = 'NOT_AUTHORIZED' AND AUTHORIZED_TYPE_CODE IS NULL)
@@ -388,114 +586,248 @@ CREATE TABLE bts_ma_state_hist (
 ```
 
 #### `bts_ma_status_hist`
+
 ```sql
 CREATE TABLE bts_ma_status_hist (
-  ID                    INT AUTO_INCREMENT PRIMARY KEY,
+  ID                      INT AUTO_INCREMENT PRIMARY KEY,
   MARKET_AUTHORIZATION_FK INT NOT NULL,
-  STATUS_CODE           VARCHAR(50) NOT NULL,
-  EFFECTIVE_START_DATE  DATE NOT NULL,
-  EFFECTIVE_END_DATE    DATE NULL,
-  ISSUER                VARCHAR(100) NULL,
-  CREATED_BY            VARCHAR(100),
-  CREATED_ON            DATETIME DEFAULT CURRENT_TIMESTAMP
+  STATUS_CODE             VARCHAR(50) NOT NULL,
+  EFFECTIVE_START_DATE    DATE NOT NULL,
+  EFFECTIVE_END_DATE      DATE NULL,
+  ISSUER                  VARCHAR(100) NULL,
+  CREATED_BY              VARCHAR(100),
+  CREATED_ON              DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-#### `bts_market_authorization` — add columns
+### Proposed header enhancement
+
 ```sql
 ALTER TABLE bts_appian_rt.bts_market_authorization
-  ADD COLUMN ORIGINAL_ISSUE_DATE  DATE NULL,
-  ADD COLUMN ORIGINAL_ISSUER      VARCHAR(100) NULL;
+  ADD COLUMN ORIGINAL_ISSUE_DATE DATE NULL,
+  ADD COLUMN ORIGINAL_ISSUER     VARCHAR(100) NULL;
 ```
 
-### Stored Procedures to Implement
+### Proposed stored procedures
 
-#### `sp_ma_submit_state(p_dossier_fk, p_bin, p_state_code, p_state_subtype, p_effective_date, p_state_issuer, p_user)`
-Logic:
-1. Resolve/ensure `bts_market_authorization` row exists for BIN
-2. End-date prior open state interval row (`EFFECTIVE_END_DATE = p_effective_date - 1 day`)
-3. Insert new row into `bts_ma_state_hist`
-4. If `AUTHORIZED + INITIAL`: set `ORIGINAL_ISSUE_DATE` and `ORIGINAL_ISSUER` on header (only if not already set)
-5. If `AUTHORIZED + AMENDMENT`: do NOT overwrite original issue date
-6. If `NOT_AUTHORIZED`: leave original issue date as-is
+#### `sp_ma_submit_state(...)`
 
-#### `sp_ma_update_status(p_bin, p_status_code, p_effective_date, p_issuer, p_user)`
-Logic:
-1. Gate check: if no `AUTHORIZED INITIAL` history exists → raise error
+Working intent previously discussed:
+
+1. Resolve / ensure MA row exists
+2. End-date prior open state interval
+3. Insert new state row
+4. Preserve original issue date / issuer for initial authorization
+5. Do not overwrite original issue metadata on amendments
+6. Preserve original issue metadata when later state becomes not authorized
+
+#### `sp_ma_update_status(...)`
+
+Working intent previously discussed:
+
+1. Require an initial authorized state before status updates
 2. End-date current open status row
 3. Insert new status row
-4. **Cross-effects (rules from ticket):**
-   - If new status = `REVOKED` (any variant): end-date any open AUTHORIZED state + insert NOT_AUTHORIZED state
-   - If new status = `TEMPORARY SUSPENSION`: end-date open MARKETED status + end-date AUTHORIZED state + insert NOT_AUTHORIZED state
+4. Apply cross-effects for revoked / suspension scenarios as specified in ticket logic
 
-### Views to Create
-| View | Description |
-|---|---|
-| `bts_view_ma_current` | Per BIN: CURRENT_STATUS_CODE, CURRENT_STATE_CODE, DISPLAY_CODE = COALESCE(status, state), ORIGINAL_ISSUE_DATE |
-| `bts_view_ma_state_history` | All state hist rows ordered by effective date |
-| `bts_view_ma_status_history` | All status hist rows ordered by effective date |
+### Proposed views
 
-### Reference Tables (confirm or add)
-- `bts_ref_market_authorization_status` — already exists; ensure `CATEGORY` column distinguishes `STATE` vs `STATUS` and includes `IS_ACTIVE`, `SEQUENCE`, `DATE_IS_REQUIRED` flags
-- State codes: `APPROV` = AUTHORIZED, `NOTAUT` = NOT_AUTHORIZED
+| View                         | Intended purpose                         |
+| ---------------------------- | ---------------------------------------- |
+| `bts_view_ma_current`        | Current MA state / status rollup per BIN |
+| `bts_view_ma_state_history`  | Ordered state-history view               |
+| `bts_view_ma_status_history` | Ordered status-history view              |
 
-### UI / Front End Contract (for Yawei)
-- Dropdowns: query `bts_ref_market_authorization_status` filtered by `CATEGORY='STATE'` or `CATEGORY='STATUS'` and `IS_ACTIVE=1`, sorted by `SEQUENCE`
-- Dashboard display: read `DISPLAY_CODE` from `bts_view_ma_current`
-- History pages: read from `bts_view_ma_state_history` / `bts_view_ma_status_history`
-- AMENDMENT subtype displayed only in history section and optionally submit screen
-- Submit handler: call `sp_submit_ma_state(p_dossier_fk, p_bin, p_state_code, p_state_subtype, p_effective_date, p_state_issuer, p_user)` — `p_state_subtype` always NULL from UI (DB derives INITIAL vs AMENDMENT)
+### Reference-table strategy
 
-### Access Groups
-`TEST_BTS_ADMIN_BUSINESS`, `TEST_BTS_ADMIN_IT`, `TEST_BTS_REVIEWER`
+`bts_ref_market_authorization_status` was treated as an existing candidate reference table for MA codes. Prior design direction suggested it may need to support concepts such as:
+
+* `CATEGORY`
+* `IS_ACTIVE`
+* `SEQUENCE`
+* `DATE_IS_REQUIRED`
+
+Do **not** assume those columns already exist everywhere; verify against the live schema / approved migration script.
+
+### UI / integration direction
+
+Prior design notes indicated:
+
+* separate dropdown sourcing for MA state vs MA status
+* simplified dashboard display from current-state/current-status rollup
+* richer history displays from state/status history views
+* amendment subtype emphasized in history/detail rather than high-level dashboard display
+
+### Access groups previously referenced
+
+* `TEST_BTS_ADMIN_BUSINESS`
+* `TEST_BTS_ADMIN_IT`
+* `TEST_BTS_REVIEWER`
+
+### Important caution
+
+Treat all NBT522 DB objects, stored procedure names, reference-table expansions, and UI contract notes as **design / implementation reference** unless verified as deployed in the target environment.
 
 ---
 
-## 10. BTS — ACTIVE TICKET: sp_refresh_cts_dpd_company_refs (Jan–Feb 2026)
+## 13. ACTIVE ETL / MIGRATION WORKSTREAM — `sp_refresh_cts_dpd_company_refs`
+
+> This section captures a major active BTS ETL / migration workstream from prior sessions. Treat row counts and exact inventories as point-in-time observations unless revalidated.
 
 ### Overview
-**Stored Procedure:** `sp_refresh_cts_dpd_company_refs`
-**Purpose:** SQL Server → MySQL migration and refresh for company/org reference data
-**Status as of Feb 2026:** Active — two long sessions (Jan 10 + Feb 15 branch)
 
-### Migration Table Footprint
-Tables with `updated_by = 'MIGRATION'` in `bts_appian_rt`:
+* **Stored Procedure:** `sp_refresh_cts_dpd_company_refs`
+* **Theme:** SQL Server → MySQL migration / refresh for company and organization reference data
+* **Status in prior sessions:** active workstream across Jan–Feb 2026
 
-| Table | Migrated Rows |
-|---|---|
-| `bts_ref_org_contact` | 20,308 |
-| `bts_ref_org_addr` | 19,994 |
-| `bts_ref_address` | 19,929 |
-| `bts_ref_contact` | 19,825 |
-| `bts_ref_org` | 13,447 |
-| `bts_ref_org_addr_contact` | 9,715 |
-| `bts_ref_org_profile` | 5,454 |
-| `bts_ref_province` | 994 |
+### Point-in-time migrated-row observations
 
-### Load/Stage Table Inventory (discovered during SP work)
-These are the ETL layer tables in `bts_appian_rt`:
+Tables observed with `updated_by = 'MIGRATION'` in `bts_appian_rt` included:
 
-**Load tables:** `bts_load_address`, `bts_load_address_detail`, `bts_load_contact`, `bts_load_country`, `bts_load_org`, `bts_load_org_addr`, `bts_load_org_addr_contact`, `bts_load_org_contact`, `bts_load_org_profile`, `bts_load_province`, `bts_load_salutation`, `bts_initial_load_org`
+| Table                      | Observed Migrated Rows |
+| -------------------------- | ---------------------- |
+| `bts_ref_org_contact`      | 20,308                 |
+| `bts_ref_org_addr`         | 19,994                 |
+| `bts_ref_address`          | 19,929                 |
+| `bts_ref_contact`          | 19,825                 |
+| `bts_ref_org`              | 13,447                 |
+| `bts_ref_org_addr_contact` | 9,715                  |
+| `bts_ref_org_profile`      | 5,454                  |
+| `bts_ref_province`         | 994                    |
 
-**Stage tables:** `bts_stage_address`, `bts_stage_address_detail`, `bts_stage_contact`, `bts_stage_country`, `bts_stage_org`, `bts_stage_org_addr`, `bts_stage_org_addr_contact`, `bts_stage_org_contact`, `bts_stage_org_profile`, `bts_stage_province`, `bts_stage_salutation`
+### ETL footprint observed during procedure work
 
-**Reference tables (company/org):** `bts_ref_address`, `bts_ref_address_detail`, `bts_ref_contact`, `bts_ref_country`, `bts_ref_org`, `bts_ref_org_addr`, `bts_ref_org_addr_contact`, `bts_ref_org_contact`, `bts_ref_org_profile`, `bts_ref_province`, `bts_ref_salutation`
+#### Load tables
 
-**Other:** `bts_tmp_country`
+* `bts_load_address`
+* `bts_load_address_detail`
+* `bts_load_contact`
+* `bts_load_country`
+* `bts_load_org`
+* `bts_load_org_addr`
+* `bts_load_org_addr_contact`
+* `bts_load_org_contact`
+* `bts_load_org_profile`
+* `bts_load_province`
+* `bts_load_salutation`
+* `bts_initial_load_org`
 
-**Load views:** `bts_view_load_addr_detail`, `bts_view_load_address`, `bts_view_load_contact`, `bts_view_load_country`, `bts_view_load_org`, `bts_view_load_org_addr`, `bts_view_load_org_addr_contact`, `bts_view_load_org_contact`, `bts_view_load_org_profile`, `bts_view_load_province`, `bts_view_load_salutation`
+#### Stage tables
+
+* `bts_stage_address`
+* `bts_stage_address_detail`
+* `bts_stage_contact`
+* `bts_stage_country`
+* `bts_stage_org`
+* `bts_stage_org_addr`
+* `bts_stage_org_addr_contact`
+* `bts_stage_org_contact`
+* `bts_stage_org_profile`
+* `bts_stage_province`
+* `bts_stage_salutation`
+
+#### Reference tables
+
+* `bts_ref_address`
+* `bts_ref_address_detail`
+* `bts_ref_contact`
+* `bts_ref_country`
+* `bts_ref_org`
+* `bts_ref_org_addr`
+* `bts_ref_org_addr_contact`
+* `bts_ref_org_contact`
+* `bts_ref_org_profile`
+* `bts_ref_province`
+* `bts_ref_salutation`
+
+#### Other supporting table
+
+* `bts_tmp_country`
+
+#### Load views
+
+* `bts_view_load_addr_detail`
+* `bts_view_load_address`
+* `bts_view_load_contact`
+* `bts_view_load_country`
+* `bts_view_load_org`
+* `bts_view_load_org_addr`
+* `bts_view_load_org_addr_contact`
+* `bts_view_load_org_contact`
+* `bts_view_load_org_profile`
+* `bts_view_load_province`
+* `bts_view_load_salutation`
+
+### Practical takeaway
+
+This workstream confirms that BTS includes a meaningful ETL / reference-refresh layer inside `bts_appian_rt`, not just user-facing operational tables.
 
 ---
 
-## 11. UPDATED CONVERSATION INVENTORY (conversations-006)
+## 14. WORKING ASSUMPTIONS / IMPLEMENTATION NOTES
 
-| Date | Title | System | Size | Notes |
-|---|---|---|---|---|
-| 2026-01-10 | sp_refresh_cts_dpd_company_refs | BTS | 1.9M | SQL Server→MySQL org/company refresh SP |
-| 2026-01-19 | BTS_market_auth_NBT522 | BTS | 667K | NBT522 ticket — MA State/Status refactor design |
-| 2026-01-20 | JIRA code cleaning | BTS | 31K | NBT522 front end spec formatting |
-| 2026-01-28 | Branch · BTS_market_auth_NBT522 | BTS | 1.69M | NBT522 continued implementation |
-| 2026-02-15 | Branch · sp_refresh_cts_dpd_company_refs | BTS | 955K | SP refresh continued |
+### Safe assumptions from prior context
+
+* `bts_appian_rt` is the primary BTS schema for core runtime work discussed here.
+* `bts_regulatory_activity`, `bts_market_authorization`, `bts_dossier`, and `bts_product` are core BTS operational anchors.
+* `REGULATORY_ACTIVTY_FK` typo is real and must be preserved in implementation.
+* Appian process / record behaviour can be a direct cause of BTS issues even when the MySQL schema itself is valid.
+* BTS includes both operational workflow data and ETL / migration / reference-refresh patterns.
+
+### Things to verify directly when coding
+
+* exact live table / column definitions
+* active view definitions
+* current stored procedure signatures and bodies
+* Appian expression / PV wiring on create vs update paths
+* whether a ticket design such as NBT522 is already deployed, partially deployed, or still in branch-only state
+* whether point-in-time row counts and ETL inventories still match current reality
 
 ---
-*Updated: 2026-02-26 | Split from combined BTS/NHPID reference | BTS conversations only*
+
+## 15. WHAT WAS INTENTIONALLY REMOVED FROM V1
+
+The following content was intentionally removed from the core technical reference because it belongs in separate archive / ingestion notes, not the system reference itself:
+
+* conversation inventories
+* `conversations-006.json` handling / splitting / filtering instructions
+* vector DB integration plan
+* extraction workflow notes
+* user/operator role statements
+* environment-specific view-definer metadata
+
+Those can live in separate companion files such as:
+
+* `BTS_Conversation_Extraction_Notes.md`
+* `BTS_Knowledge_Base_Ingestion.md`
+* `BTS_Working_Context.md`
+
+---
+
+## 16. SUMMARY
+
+### What this document is
+
+A corrected **technical context primer** for BTS architecture, schema anchors, Appian integration, common SQL patterns, troubleshooting, and active workstream context.
+
+### What it is not
+
+* not a full BTS data dictionary
+* not a complete ERD
+* not a full Appian design specification
+* not proof that every active-ticket object is already deployed
+* not an environment-specific deployment manifest
+
+### Primary mental model
+
+If you need to reason about BTS quickly:
+
+1. **Use the live `bts_appian_rt` schema** for actual object names
+2. **Use view definitions and procedures** for derived/ranked logic
+3. **Use Appian object definitions** for create/update/lock/UI behaviour
+4. **Treat legacy naming debt as real schema truth**
+5. **Treat NBT522 and company-refresh work as implementation context until verified as deployed**
+
+---
+
+*Updated: 2026-02-28 | Corrected v2 from prior extracted BTS reference*
