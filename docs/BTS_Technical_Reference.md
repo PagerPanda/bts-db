@@ -668,6 +668,10 @@ Prior design notes indicated:
 
 Treat all NBT522 DB objects, stored procedure names, reference-table expansions, and UI contract notes as **design / implementation reference** unless verified as deployed in the target environment.
 
+### Dedicated workstream file
+
+For expanded NBT522 design details including cross-effect rules, UI contract direction, and implementation cautions, see `BTS_NBT522_Workstream.md`.
+
 ---
 
 ## 13. ACTIVE ETL / MIGRATION WORKSTREAM — `sp_refresh_cts_dpd_company_refs`
@@ -762,6 +766,10 @@ Tables observed with `updated_by = 'MIGRATION'` in `bts_appian_rt` included:
 
 This workstream confirms that BTS includes a meaningful ETL / reference-refresh layer inside `bts_appian_rt`, not just user-facing operational tables.
 
+### Dedicated workstream file
+
+For expanded ETL context including workstream interpretation, implementation cautions, and troubleshooting guidance, see `BTS_CTS_DPD_Refresh_Workstream.md`.
+
 ---
 
 ## 14. WORKING ASSUMPTIONS / IMPLEMENTATION NOTES
@@ -801,6 +809,8 @@ Those can live in separate companion files such as:
 * `BTS_Conversation_Extraction_Notes.md`
 * `BTS_Knowledge_Base_Ingestion.md`
 * `BTS_Working_Context.md`
+* `BTS_NBT522_Workstream.md`
+* `BTS_CTS_DPD_Refresh_Workstream.md`
 
 ---
 

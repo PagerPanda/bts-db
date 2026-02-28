@@ -20,7 +20,7 @@ SQL scripts for backend development on the Biocides Tracking System (BTS).
 ## Active Tickets
 
 - **NBT522** — MA State/Status refactor (schema + procs + views)
-- **sp_refresh_cts_dpd_company_refs** — SQL Server → MySQL org/company refresh
+- **NBT537 / NBT568** — CTS/DPD → BTS org/company reference refresh (`sp_refresh_cts_dpd_company_refs`)
 
 ## Reference
 
@@ -30,6 +30,8 @@ Additional companion docs in `/docs`:
 - `BTS_Conversation_Extraction_Notes.md` — ChatGPT conversation source inventory
 - `BTS_Knowledge_Base_Ingestion.md` — vector DB / knowledge base integration plan
 - `BTS_Working_Context.md` — environment metadata, role context, view definer
+- `BTS_NBT522_Workstream.md` — NBT522 MA state/status refactor workstream
+- `BTS_CTS_DPD_Refresh_Workstream.md` — CTS/DPD company refresh workstream
 
 ## Claude Code
 

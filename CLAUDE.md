@@ -17,6 +17,8 @@ For additional context see companion docs in `/docs`:
 - `BTS_Conversation_Extraction_Notes.md` — conversation source inventory
 - `BTS_Knowledge_Base_Ingestion.md` — vector DB integration plan
 - `BTS_Working_Context.md` — environment metadata and role context
+- `BTS_NBT522_Workstream.md` — dedicated NBT522 MA state/status refactor workstream reference
+- `BTS_CTS_DPD_Refresh_Workstream.md` — dedicated CTS/DPD company refresh workstream reference
 
 ---
 
@@ -46,6 +48,7 @@ For additional context see companion docs in `/docs`:
 
 ### NBT522 — MA State/Status Refactor (In Progress)
 Full design in `docs/BTS_Technical_Reference.md` Section 12.
+Dedicated workstream reference: `docs/BTS_NBT522_Workstream.md`
 - New tables needed: `bts_ma_state_hist`, `bts_ma_status_hist`
 - New columns on `bts_market_authorization`: `ORIGINAL_ISSUE_DATE`, `ORIGINAL_ISSUER`
 - Two stored procs: `sp_ma_submit_state(...)`, `sp_ma_update_status(...)`
@@ -54,7 +57,9 @@ Full design in `docs/BTS_Technical_Reference.md` Section 12.
 
 ### sp_refresh_cts_dpd_company_refs (In Progress)
 SQL Server → MySQL org/company data refresh stored procedure.
+JIRA tickets: NBT537, NBT568
 ETL table inventory in Section 13 of reference doc.
+Dedicated workstream reference: `docs/BTS_CTS_DPD_Refresh_Workstream.md`
 
 ---
 
