@@ -211,7 +211,42 @@ Use this workstream file for:
 
 ---
 
-## 8. SUMMARY
+## 8. KNOWN ISSUE — MISSING POST-CUTOFF COMPANIES
+
+### Symptom
+
+Companies added to CTS after approximately March 2025 do not appear in `bts_ref_org` after `sp_refresh_cts_company_refs` runs. Example: "JIFCLEAN INC." / COMPANY_CODE = 22179.
+
+### Root cause assessment
+
+The SP itself has no date filtering — step 3.4 is an unfiltered `SELECT ... FROM stg_cts_company`. If a company is missing from `bts_ref_org` post-refresh, the data never reached `stg_cts_company`.
+
+The most likely upstream cause is that the Informatica ETL mapping extracts from `dpd.*` tables (a stale replica) instead of the canonical `common.*_WV` views on the CTS SQL Server side. If `dpd.*` was last refreshed around March 2025, all companies added after that date would be absent from the BTS pipeline.
+
+### Diagnostic approach
+
+Run the pipeline tracer query: `queries/debug_cts_missing_companies_pipeline.sql`
+
+This walks backward from SP output to load-layer input, checking each pipeline layer for the missing company and inspecting staging freshness watermarks.
+
+### Resolution
+
+1. Confirm which pipeline layer the company drops off at (diagnostic queries)
+2. If missing from `stg_cts_company` and `bts_load_org`: escalate to ETL/Informatica team to correct source mapping from `dpd.*` to `common.*_WV`
+3. If missing only from `stg_cts_company` (present in `bts_load_org`): inspect `bts_view_load_org` for filtering
+4. After upstream fix, re-run SP and verify company appears in `bts_ref_org` and Appian FE
+
+### Date discovered
+
+2026-03-03
+
+### Related tickets
+
+NBT537 / NBT568
+
+---
+
+## 9. SUMMARY
 
 ### What this file is
 
