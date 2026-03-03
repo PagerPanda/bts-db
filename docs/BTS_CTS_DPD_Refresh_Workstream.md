@@ -223,6 +223,22 @@ The SP itself has no date filtering — step 3.4 is an unfiltered `SELECT ... FR
 
 The most likely upstream cause is that the Informatica ETL mapping extracts from `dpd.*` tables (a stale replica) instead of the canonical `common.*_WV` views on the CTS SQL Server side. If `dpd.*` was last refreshed around March 2025, all companies added after that date would be absent from the BTS pipeline.
 
+### Confirmed diagnostic results (2026-03-03)
+
+Pipeline tracer query (`queries/debug_cts_missing_companies_pipeline.sql`) confirmed:
+
+| Layer | Finding |
+|-------|---------|
+| `bts_ref_org` | 22179 absent. MAX(PK) = 19328 |
+| `stg_cts_company` | 22179 absent. MAX(COMPANY_CODE) = 19328, 14707 rows, all ETL_DATE_STAMP = 2026-02-23 |
+| `bts_load_org` | **Empty** (MAX = NULL). Load layer not populated or truncated post-load |
+| `bts_view_load_org` | Validation/error-detection view (not a pass-through). Selects rows from `bts_load_org` where any column fails format/length validation. Does NOT filter companies from pipeline |
+| `bts_initial_load_org` | 22179 absent |
+
+**Conclusion:** Company 22179 never entered the pipeline at any layer. The upstream Informatica extract/source caps at COMPANY_CODE 19328. All companies above that code are absent.
+
+**Additional finding:** `bts_load_org` is completely empty, suggesting Informatica may write directly to `stg_cts_company` (bypassing the load layer), or `bts_load_org` is truncated post-load.
+
 ### Diagnostic approach
 
 Run the pipeline tracer query: `queries/debug_cts_missing_companies_pipeline.sql`
@@ -231,9 +247,9 @@ This walks backward from SP output to load-layer input, checking each pipeline l
 
 ### Resolution
 
-1. Confirm which pipeline layer the company drops off at (diagnostic queries)
-2. If missing from `stg_cts_company` and `bts_load_org`: escalate to ETL/Informatica team to correct source mapping from `dpd.*` to `common.*_WV`
-3. If missing only from `stg_cts_company` (present in `bts_load_org`): inspect `bts_view_load_org` for filtering
+1. Confirm which pipeline layer the company drops off at (diagnostic queries) — **done, see above**
+2. Escalate to ETL/Informatica team: the source extract caps at COMPANY_CODE 19328 — correct source mapping from `dpd.*` to `common.*_WV`
+3. Confirm actual Informatica target table mapping (does it write to `stg_cts_company` directly or via `bts_load_org`?)
 4. After upstream fix, re-run SP and verify company appears in `bts_ref_org` and Appian FE
 
 ### Date discovered
