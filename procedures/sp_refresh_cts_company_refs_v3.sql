@@ -242,7 +242,10 @@ BEGIN
         'FROM `', p_src_schema, '`.stg_cts_org_addr_contact oac ',
         'JOIN bts_ref_org_addr oa ',
         '  ON oa.ORG_FK = oac.ORG_FK_RO AND oa.ADDR_FK = oac.ADDR_FK_RO ',
-        'WHERE oac.CONTACT_FK IS NOT NULL'
+        'WHERE oac.CONTACT_FK IS NOT NULL ',
+        '  AND oac.CONTACT_FK <> 0 ',
+        '  AND oac.ORG_FK_RO IS NOT NULL ',
+        '  AND oac.ADDR_FK_RO IS NOT NULL'
     );
     PREPARE s FROM @sql; EXECUTE s USING @p_updated_by; DEALLOCATE PREPARE s;
 
@@ -271,6 +274,7 @@ BEGIN
         '  ?, ',
         '  NOW(6) ',
         'FROM `', p_src_schema, '`.stg_cts_org_profile p ',
+        'JOIN bts_ref_org o ON o.PK = p.PK ',
         /* -- resolve DIN owner OAC -- */
         'LEFT JOIN bts_ref_org_addr oa_owner ',
         '  ON oa_owner.ORG_FK = p.DIN_OWNER_ORG_FK_RO ',
