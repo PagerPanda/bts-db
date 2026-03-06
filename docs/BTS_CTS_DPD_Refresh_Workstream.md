@@ -262,7 +262,86 @@ NBT537 / NBT568
 
 ---
 
-## 9. SUMMARY
+## 9. CONFIRMED STAGING ARCHITECTURE — SP V3 ETL REMAPPING
+
+> Confirmed 2026-03-06. This section supersedes any prior assumption that the SP must be rewritten to use common/dp native column names.
+
+### Core principle
+
+Existing `stg_cts_*` staging tables retain their **DPD-shaped column names**. Informatica is responsible for remapping common/dp source columns INTO these legacy staging columns. The SP reads staging tables unchanged.
+
+### Staging table categories
+
+#### A) Existing staging tables — SOURCE CHANGE ONLY (keep table name + columns)
+
+| Staging Table | Old Source | New Source | Column Mapping Notes |
+|---|---|---|---|
+| `stg_cts_company` | `dpd.COMPANY` | `common.ORG_WV` | Map into COMPANY_CODE, COMPANY_NAME, MFR_CODE, OLD_NOTES, NOTES, INACTIVATION_DATE, CRA_BUSINESS_NO, SBR_* |
+| `stg_cts_contact` | `dpd.CONTACT` | `common.CONTACT` | Map PK→CONTACT_CODE, SALUTATION_FK→SALUTATION_CODE, EMAIL→E_MAIL_ADDRESS, TS→LAST_UPDATE_DATE |
+| `stg_cts_address` | `dpd.ADDRESS` | `common.ADDR_WV` | Map PK→ADDRESS_CODE, COUNTRY_FK→COUNTRY_CODE, PROVINCE_FK→PROVINCE_CODE, ADDR_LINE_1→STREET_NAME |
+| `stg_cts_address_orig` | `dpd.ADDRESS_ORIG` | `common.ADDR_DETAIL` | Map ADDR_FK→ADDRESS_CODE, LOCATION→ATTENTION_TO, TS→LAST_UPDATE_DATE |
+| `stg_cts_company_contact` | `dpd.COMPANY_CONTACT` | `common.ORG_CONTACT_WV` | Map ORG_COMPANY_CODE_RO→COMPANY_CODE, CONTACT_FK→CONTACT_CODE |
+| `stg_cts_company_type` | `dpd.COMPANY_TYPE` | `common.ORG_TYPE` | Map ORG_TYPE_FK→COMPANY_TYPE_CODE, ORG_TYPE_DESC_EN (or FR — TBD)→COMPANY_TYPE_DESC, INACTIVE_DATE |
+| `stg_cts_country` | `dpd.COUNTRY` | `common.COUNTRY` | Direct column mapping |
+| `stg_cts_province` | `dpd.PROVINCE` | `common.PROVINCE` | Direct column mapping |
+| `stg_cts_salutation` | `dpd.SALUTATION` | `common.SALUTATION` | Direct column mapping |
+
+SP steps 3.1–4 read these tables with **no code changes required**.
+
+#### B) Legacy link staging tables — KEPT FOR BACKWARD COMPATIBILITY
+
+| Staging Table | Current Source |
+|---|---|
+| `stg_cts_company_address_link` | `dpd.COMPANY_ADDRESS_LINK` |
+| `stg_cts_sub_company_address_link` | `dpd.SUB_COMPANY_ADDRESS_LINK` |
+
+Confirmed DDL for `stg_cts_company_address_link`:
+```
+COMPANY_ID (PK), DIN_COMPANY_CODE, ADDRESS_CODE, CONTACT_CODE,
+MAILING_FLAG, BILLING_FLAG, NOTIFICATION_FLAG, OTHER_FLAG,
+COMPANY_TYPE_CODE, STANDARD_COMM_MTD, ETL_*
+```
+
+Confirmed DDL for `stg_cts_sub_company_address_link`:
+```
+COMPANY_ID (PK), DIN_COMPANY_CODE, COMPANY_CODE, ADDRESS_CODE, CONTACT_CODE,
+MAILING_FLAG, BILLING_FLAG, NOTIFICATION_FLAG, OTHER_FLAG,
+COMPANY_TYPE_CODE, ETL_*
+```
+
+These remain populated for backward compatibility until SP v3 is fully validated end-to-end, then can be retired.
+
+#### C) Net-new staging tables — CREATED FOR SP V3 STEPS 5–6
+
+| Staging Table | Source | DDL File |
+|---|---|---|
+| `stg_cts_org_addr` | `common.ORG_ADDR_WV` | `schema/nbt537_stg_cts_org_addr.sql` |
+| `stg_cts_org_addr_contact` | `common.ORG_ADDR_CONTACT_WV` | `schema/nbt537_stg_cts_org_addr_contact.sql` |
+| `stg_cts_org_profile` | `dp.ORG_PROFILE_WV` | `schema/nbt537_stg_cts_org_profile.sql` |
+
+SP steps 5–6 use these new tables with `_RO` columns for resolving into `bts_ref_org_addr` / `bts_ref_org_addr_contact`.
+
+### Confirmed DDL for `stg_cts_company_type`
+
+```
+COMPANY_TYPE_CODE (PK), COMPANY_TYPE_DESC, INACTIVE_DATE, ETL_*
+```
+
+### What was corrected
+
+1. **Prior incorrect claim:** SP steps 3.1–4 must be rewritten to common/dp native column names. **Correction:** staging tables remain DPD-shaped; Informatica remaps at load time. SP is unchanged.
+2. **Prior incorrect claim:** `stg_cts_company_type` needs renaming to `stg_cts_org_type`. **Correction:** keep existing table; only change source from `dpd.COMPANY_TYPE` to `common.ORG_TYPE`.
+
+### Pending confirmations (pre-cutover)
+
+1. **`stg_cts_company_type` mapping rule:** `COMPANY_TYPE_DESC` is `VARCHAR(50)`. `common.ORG_TYPE` has EN/FR; pick one (likely EN) or implement preference/concat/truncate rule.
+2. **`stg_cts_address_orig` from `common.ADDR_DETAIL`:** rowcount was observed as 0 earlier; confirm whether LOCATION should populate ATTENTION_TO (may be empty, still include mapping).
+3. **`stg_cts_org_addr_contact`** must include `ORG_FK_RO` + `ADDR_FK_RO` populated (required by SP v3 join into `bts_ref_org_addr`).
+4. **Post-ETL validation:** `stg_cts_company` count should align with `common.ORG_WV` (~14,840) not `dpd.COMPANY` (~14,707). Spot check DIN owner/billing/notify resolution rates.
+
+---
+
+## 10. SUMMARY
 
 ### What this file is
 
